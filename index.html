@@ -69,6 +69,14 @@
   .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
   .kick { color: var(--dim); font-size: 17px; padding: 2px 6px; flex: none; }
   .kick:active { color: var(--red); }
+  .tag {
+    font-size: 10px; font-weight: 700; letter-spacing: .8px; color: var(--gold);
+    border: 1px solid #4a4023; background: #221d10; padding: 3px 6px; border-radius: 5px; flex: none;
+  }
+  .waiting {
+    padding: 17px; text-align: center; color: var(--dim); font-size: 15px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  }
 
   /* ---------- game ---------- */
   #game { padding: 0; }
@@ -222,6 +230,7 @@
   <p class="sub" style="color:var(--dim);margin:0">Everyone types this code</p>
   <div class="code-big" id="lobbyCode">----</div>
   <div class="seat-list" id="lobbySeats"></div>
+  <div id="waitMsg" class="waiting" style="display:none">Waiting for the host to start…</div>
   <button class="btn" id="startBtn">Start game</button>
   <button class="btn ghost" id="leaveLobbyBtn">Leave</button>
 </div>
@@ -332,6 +341,7 @@ let code = null;
 let meId = null;
 let players = [];   // [{id, name, seat, is_out}]
 let entries = [];   // [{id, from_id, to_id, amount, note}] oldest → newest
+let game = null;    // {code, host_id, started_at, ended_at}
 let channel = null;
 let payTarget = null;   // player object, or BANK
 let payDigits = "";
@@ -369,6 +379,8 @@ const me = () => players.find((p) => p.id === meId);
 const nameOf = (id) => (id === null ? "Bank" : players.find((p) => p.id === id)?.name ?? "?");
 const colorOf = (p) => COLORS[p.seat % COLORS.length];
 const alive = () => players.filter((p) => !p.is_out);
+const isHost = () => !!meId && game?.host_id === meId;
+const started = () => !!game?.started_at;
 
 // ───────────────────────────── persistence ─────────────────────────────
 function remember() {
@@ -395,6 +407,7 @@ async function loadAll() {
   ]);
   players = p.data ?? [];
   entries = e.data ?? [];
+  game = g.data ?? null;
   return g.data;
 }
 
@@ -420,8 +433,13 @@ function onEntries(pl) {
   render();
 }
 function onGame(pl) {
-  if (pl.new?.ended_at) renderEnd();
-  else { sheet("endSheet", false); render(); }
+  game = pl.new ?? game;
+  if (game?.ended_at) return renderEnd();
+  sheet("endSheet", false);
+  // The host tapped Start — every phone moves, nobody taps their own.
+  if (started() && $("lobby").classList.contains("on")) show("game");
+  if (!started() && $("game").classList.contains("on")) show("lobby");
+  render();
 }
 
 function flash(e) {
@@ -451,6 +469,9 @@ $("newGameBtn").onclick = () => guard($("newGameBtn"), async () => {
   const { error } = await sb.from("games").insert({ code });
   if (error) return ($("joinErr").textContent = error.message);
   if (!(await seatMe(name))) return;
+  // Whoever makes the game runs it.
+  await sb.from("games").update({ host_id: meId }).eq("code", code);
+  game = { ...(game ?? {}), code, host_id: meId };
   show("lobby");
   render();
 });
@@ -467,7 +488,8 @@ $("joinBtn").onclick = () => guard($("joinBtn"), async () => {
   code = c;
   if (!(await seatMe(name))) return;
   const g = await loadAll();
-  show(entries.length ? "game" : "lobby");
+  // Late arrival to a game already running drops straight onto the board.
+  show(started() ? "game" : "lobby");
   if (g?.ended_at) renderEnd();
   render();
 });
@@ -518,14 +540,19 @@ function offerSeatTakeover(name) {
     subscribe();
     b.remove();
     $("joinErr").textContent = "";
-    show(entries.length ? "game" : "lobby");
+    show(started() ? "game" : "lobby");
     render();
   };
   $("joinErr").after(b);
 }
 
-$("startBtn").onclick = () => {
+$("startBtn").onclick = async () => {
+  if (!isHost()) return toast("Only the host can start");
   if (players.length < 2) return toast("Need 2 players");
+  const { error } = await sb.from("games")
+    .update({ started_at: new Date().toISOString() }).eq("code", code);
+  if (error) return toast("Could not start");
+  game = { ...game, started_at: new Date().toISOString() };
   show("game");
   render();
 };
@@ -540,9 +567,14 @@ async function kick(p) {
 }
 
 async function leave() {
+  // Host walking out hands the game to the next seat, so nobody is stranded.
+  if (isHost()) {
+    const heir = players.find((p) => p.id !== meId);
+    if (heir) await sb.from("games").update({ host_id: heir.id }).eq("code", code);
+  }
   if (channel) sb.removeChannel(channel);
   if (meId) await sb.from("players").delete().eq("id", meId);
-  code = meId = null; players = []; entries = [];
+  code = meId = null; players = []; entries = []; game = null;
   forget();
   sheet("endSheet", false);
   show("join");
@@ -559,9 +591,11 @@ function render() {
   for (const p of players) {
     const row = document.createElement("div");
     row.className = "seat-row";
+    const host = game?.host_id === p.id;
     row.innerHTML = `<span class="dot" style="background:${colorOf(p)}"></span>
-      <span style="flex:1">${esc(p.name)}${p.id === meId ? " (you)" : ""}</span>`;
-    if (p.id !== meId) {
+      <span style="flex:1">${esc(p.name)}${p.id === meId ? " (you)" : ""}</span>
+      ${host ? `<span class="tag">HOST</span>` : ""}`;
+    if (p.id !== meId && isHost()) {
       const x = document.createElement("button");
       x.className = "kick";
       x.textContent = "✕";
@@ -570,6 +604,15 @@ function render() {
     }
     seats.appendChild(row);
   }
+
+  // Only the host gets a Start button; everyone else is told to wait.
+  const hostName = players.find((p) => p.id === game?.host_id)?.name;
+  $("startBtn").style.display = isHost() ? "" : "none";
+  $("waitMsg").style.display = isHost() ? "none" : "";
+  $("waitMsg").textContent = players.length < 2
+    ? "Waiting for players…"
+    : `Waiting for ${hostName ?? "the host"} to start…`;
+  if (isHost()) $("startBtn").textContent = players.length < 2 ? "Waiting for players…" : "Start game";
 
   const t = $("tiles");
   t.innerHTML = "";
@@ -739,7 +782,7 @@ async function goOut(toId) {
 async function unOut(p) {
   if (!confirm(`Bring ${p.name} back in?`)) return;
   await sb.from("players").update({ is_out: false }).eq("id", p.id);
-  await sb.from("games").update({ ended_at: null }).eq("code", code);
+  await sb.from("games").update({ ended_at: null, started_at: game?.started_at ?? new Date().toISOString() }).eq("code", code);
 }
 
 $("mCall").onclick = async () => {
@@ -771,7 +814,8 @@ $("endLeave").onclick = leave;
 $("endAgain").onclick = async () => {
   await sb.from("entries").delete().eq("code", code);
   await sb.from("players").update({ is_out: false }).eq("code", code);
-  await sb.from("games").update({ ended_at: null }).eq("code", code);
+  // Stays started — a rematch shouldn't send everyone back to the lobby.
+  await sb.from("games").update({ ended_at: null, started_at: new Date().toISOString() }).eq("code", code);
   entries = [];
   players = players.map((p) => ({ ...p, is_out: false }));
   sheet("endSheet", false);
@@ -792,8 +836,7 @@ $("endAgain").onclick = async () => {
   const g = await loadAll().catch(() => null);
   if (!players.some((p) => p.id === meId)) { forget(); code = meId = null; return; }
   subscribe();
-  // Already money on the table means the game is underway; otherwise we're still in the lobby.
-  show(entries.length ? "game" : "lobby");
+  show(started() ? "game" : "lobby");
   render();
   if (g?.ended_at) renderEnd();
 })();

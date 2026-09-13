@@ -4,6 +4,8 @@
 create table if not exists games (
   code        text primary key,
   created_at  timestamptz not null default now(),
+  host_id     uuid,           -- whoever made the game; only they can start it
+  started_at  timestamptz,    -- set by the host's tap, moves every phone at once
   ended_at    timestamptz
 );
 
