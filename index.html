@@ -67,6 +67,8 @@
     text-align: left;
   }
   .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+  .kick { color: var(--dim); font-size: 17px; padding: 2px 6px; flex: none; }
+  .kick:active { color: var(--red); }
 
   /* ---------- game ---------- */
   #game { padding: 0; }
@@ -428,44 +430,98 @@ function flash(e) {
 }
 
 // ───────────────────────────── join ─────────────────────────────
-$("newGameBtn").onclick = async () => {
+// One join at a time. A double-tap used to buy a second seat.
+let joining = false;
+async function guard(btn, fn) {
+  if (joining) return;
+  joining = true;
+  const was = btn.textContent;
+  btn.textContent = "…";
+  btn.disabled = true;
+  try { await fn(); }
+  finally { joining = false; btn.textContent = was; btn.disabled = false; }
+}
+
+$("newGameBtn").onclick = () => guard($("newGameBtn"), async () => {
   const name = $("nameIn").value.trim();
   if (!name) return ($("joinErr").textContent = "Name first");
   if (!configured) return ($("joinErr").textContent = "Supabase keys not set — see README");
+  $("joinErr").textContent = "";
   code = randCode();
   const { error } = await sb.from("games").insert({ code });
   if (error) return ($("joinErr").textContent = error.message);
-  await seatMe(name);
+  if (!(await seatMe(name))) return;
   show("lobby");
   render();
-};
+});
 
-$("joinBtn").onclick = async () => {
+$("joinBtn").onclick = () => guard($("joinBtn"), async () => {
   const name = $("nameIn").value.trim();
   const c = $("codeIn").value.trim().toUpperCase();
   if (!name) return ($("joinErr").textContent = "Name first");
   if (c.length !== 4) return ($("joinErr").textContent = "4 letters");
   if (!configured) return ($("joinErr").textContent = "Supabase keys not set — see README");
+  $("joinErr").textContent = "";
   const { data } = await sb.from("games").select("code").eq("code", c).single();
   if (!data) return ($("joinErr").textContent = "No game " + c);
   code = c;
-  await seatMe(name);
+  if (!(await seatMe(name))) return;
   const g = await loadAll();
-  show(players.length && entries.length ? "game" : "lobby");
+  show(entries.length ? "game" : "lobby");
   if (g?.ended_at) renderEnd();
   render();
-};
+});
 
 async function seatMe(name) {
   await loadAll().catch(() => {});
+
+  // Rejoining this same game on this same phone? Take the seat back, don't make a new one.
+  const saved = recall();
+  if (saved?.code === code && players.some((p) => p.id === saved.meId)) {
+    meId = saved.meId;
+    const mine = players.find((p) => p.id === meId);
+    if (mine.name !== name) await sb.from("players").update({ name }).eq("id", meId);
+    remember();
+    subscribe();
+    return true;
+  }
+
+  // Somebody already sitting under that name — almost always the same person, twice.
+  if (players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+    $("joinErr").textContent = `"${name}" is already in. Add a letter, or tap their name to take that seat.`;
+    offerSeatTakeover(name);
+    return false;
+  }
+
   const seat = players.length ? Math.max(...players.map((p) => p.seat)) + 1 : 0;
-  if (seat >= 6) { $("joinErr").textContent = "Game full (6)"; return; }
+  if (seat >= 6) { $("joinErr").textContent = "Game full (6)"; return false; }
   const { data, error } = await sb.from("players").insert({ code, name, seat }).select().single();
-  if (error) { $("joinErr").textContent = error.message; return; }
+  if (error) { $("joinErr").textContent = error.message; return false; }
   meId = data.id;
   players = [...players.filter((p) => p.id !== data.id), data].sort((a, b) => a.seat - b.seat);
   remember();
   subscribe();
+  return true;
+}
+
+// Lets the real owner of a name claim that seat from this phone.
+function offerSeatTakeover(name) {
+  const match = players.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!match) return;
+  const b = document.createElement("button");
+  b.className = "btn ghost";
+  b.style.marginTop = "6px";
+  b.textContent = `That's me — take ${match.name}'s seat`;
+  b.onclick = () => {
+    meId = match.id;
+    remember();
+    subscribe();
+    b.remove();
+    $("joinErr").textContent = "";
+    show(entries.length ? "game" : "lobby");
+    render();
+  };
+  $("joinErr").after(b);
 }
 
 $("startBtn").onclick = () => {
@@ -474,6 +530,14 @@ $("startBtn").onclick = () => {
   render();
 };
 $("leaveLobbyBtn").onclick = leave;
+
+// Remove a stray seat — a double-join, or someone who walked away before the game started.
+async function kick(p) {
+  if (!confirm(`Remove ${p.name} from the game?`)) return;
+  await sb.from("players").delete().eq("id", p.id);
+  players = players.filter((x) => x.id !== p.id);
+  render();
+}
 
 async function leave() {
   if (channel) sb.removeChannel(channel);
@@ -490,10 +554,22 @@ function render() {
   $("gameCode").textContent = code ?? "----";
   $("menuSub").textContent = "Code " + (code ?? "----");
 
-  $("lobbySeats").innerHTML = players
-    .map((p) => `<div class="seat-row"><span class="dot" style="background:${colorOf(p)}"></span>
-      ${esc(p.name)}${p.id === meId ? " (you)" : ""}</div>`)
-    .join("");
+  const seats = $("lobbySeats");
+  seats.innerHTML = "";
+  for (const p of players) {
+    const row = document.createElement("div");
+    row.className = "seat-row";
+    row.innerHTML = `<span class="dot" style="background:${colorOf(p)}"></span>
+      <span style="flex:1">${esc(p.name)}${p.id === meId ? " (you)" : ""}</span>`;
+    if (p.id !== meId) {
+      const x = document.createElement("button");
+      x.className = "kick";
+      x.textContent = "✕";
+      x.onclick = () => kick(p);
+      row.appendChild(x);
+    }
+    seats.appendChild(row);
+  }
 
   const t = $("tiles");
   t.innerHTML = "";
@@ -716,7 +792,8 @@ $("endAgain").onclick = async () => {
   const g = await loadAll().catch(() => null);
   if (!players.some((p) => p.id === meId)) { forget(); code = meId = null; return; }
   subscribe();
-  show(entries.length || players.length > 1 ? "game" : "lobby");
+  // Already money on the table means the game is underway; otherwise we're still in the lobby.
+  show(entries.length ? "game" : "lobby");
   render();
   if (g?.ended_at) renderEnd();
 })();
