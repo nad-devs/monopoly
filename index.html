@@ -209,6 +209,27 @@
     white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
   }
   .toast.on { opacity: 1; }
+
+  /* ── tap to pay ── */
+  .tapbtn { margin: 0 0 14px; background: var(--card-2); color: var(--text); border: 1px solid var(--line); }
+  .scan-ring {
+    position: relative; width: 118px; height: 118px; margin: 8px auto 18px;
+    border-radius: 50%; display: grid; place-items: center;
+    background: var(--card-2); border: 1px solid var(--line); font-size: 38px;
+  }
+  .scan-wave {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid var(--blue); animation: ping 1.5s ease-out infinite;
+  }
+  @keyframes ping {
+    0%   { transform: scale(1);   opacity: .7; }
+    100% { transform: scale(1.5); opacity: 0;  }
+  }
+  @media (prefers-reduced-motion: reduce) { .scan-wave { animation: none; opacity: .5; } }
+  .scan-amt {
+    text-align: center; font-size: 30px; font-weight: 700;
+    font-variant-numeric: tabular-nums; margin-bottom: 6px;
+  }
 </style>
 </head>
 <body>
@@ -242,6 +263,7 @@
     <button class="menu-btn" id="menuBtn">⋯</button>
   </div>
   <div class="tiles" id="tiles"></div>
+  <button class="btn tapbtn" id="tapPayBtn" style="display:none">Tap a sticker to pay</button>
   <div class="log" id="log"></div>
   <div class="mybar">
     <div>
@@ -277,12 +299,62 @@
   </div>
 </div>
 
+<!-- ============ TAP-TO-PAY SHEET ============ -->
+<!-- Amount first, then the sticker picks who. The reverse of the pay sheet. -->
+<div class="sheet" id="tapSheet">
+  <div class="sheet-inner">
+    <h2 id="tapTitle">Tap to pay</h2>
+    <p class="sub" id="tapSub"></p>
+
+    <!-- step 1: amount -->
+    <div id="tapStepAmount">
+      <div class="amount-display zero" id="tapAmt">$0</div>
+      <div class="quick">
+        <button data-tadd="50">+50</button>
+        <button data-tadd="100">+100</button>
+        <button data-tadd="200">+200</button>
+        <button data-tadd="500">+500</button>
+      </div>
+      <div class="pad">
+        <button data-tk="1">1</button><button data-tk="2">2</button><button data-tk="3">3</button>
+        <button data-tk="4">4</button><button data-tk="5">5</button><button data-tk="6">6</button>
+        <button data-tk="7">7</button><button data-tk="8">8</button><button data-tk="9">9</button>
+        <button data-tk="0" class="wide">0</button><button data-tk="back">⌫</button>
+      </div>
+      <div class="row2">
+        <button class="btn ghost" id="tapCancel">Cancel</button>
+        <button class="btn" id="tapNext">Next</button>
+      </div>
+    </div>
+
+    <!-- step 2: scan -->
+    <div id="tapStepScan" style="display:none">
+      <div class="scan-ring"><div class="scan-wave"></div><span>📶</span></div>
+      <div class="scan-amt" id="tapScanAmt">$0</div>
+      <p class="sub" id="tapScanMsg">Hold their sticker against the back of your phone.</p>
+      <button class="btn ghost" id="tapScanCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LINK STICKER SHEET ============ -->
+<div class="sheet" id="linkSheet">
+  <div class="sheet-inner">
+    <h2>Your sticker</h2>
+    <p class="sub" id="linkSub">Link a sticker to your seat so others can pay you by tapping it.</p>
+    <div class="scan-ring"><div class="scan-wave"></div><span>📶</span></div>
+    <p class="sub" id="linkMsg">Hold your sticker against the back of your phone.</p>
+    <button class="btn ghost" id="linkCancel">Cancel</button>
+  </div>
+</div>
+
 <!-- ============ MENU SHEET ============ -->
 <div class="sheet" id="menuSheet">
   <div class="sheet-inner">
     <h2>Game</h2>
     <p class="sub" id="menuSub"></p>
     <div class="menu-scroll">
+      <button class="menu-item" id="mSticker">My sticker — link it to this seat</button>
       <button class="menu-item" id="mCall">Call it — end &amp; show standings</button>
       <button class="menu-item" id="mClose">Close</button>
       <div class="menu-spacer">scroll for more</div>
@@ -626,6 +698,11 @@ function render() {
   }
   t.appendChild(tile({ name: "Bank", color: "var(--gold)", bank: true, onClick: () => openPay(BANK) }));
 
+  // Only worth showing once somebody has actually linked a sticker to pay to.
+  const payable = players.some((p) => p.nfc_id && p.id !== meId && !p.is_out);
+  $("tapPayBtn").style.display = NFC_OK && payable ? "" : "none";
+  $("mSticker").style.display = NFC_OK ? "" : "none";
+
   const mine = me();
   $("myName").textContent = mine ? (mine.is_out ? mine.name + " · out" : mine.name) : "—";
   const mb = balanceOf(meId);
@@ -719,6 +796,162 @@ async function submitPay(collecting) {
   if (error) return toast("Failed — try again");
   if (!entries.some((e) => e.id === data.id)) { entries = [...entries, data]; render(); }
 }
+
+// ───────────────────────────── nfc: tap to pay ─────────────────────────────
+// Chrome on Android only. iPhones cannot scan from a web page, so the tiles stay.
+const NFC_OK = "NDEFReader" in window;
+
+let tapDigits = "";
+let scanner = null;        // the live NDEFReader
+let scanStop = null;       // AbortController — one scan at a time
+let scanBusy = false;      // a tag landed; ignore repeats while we write the entry
+
+function readTag(msg) {
+  for (const r of msg.records) {
+    try {
+      if (r.recordType === "text") return new TextDecoder(r.encoding || "utf-8").decode(r.data).trim();
+      if (r.recordType === "url") return decodeURIComponent(String(new URL(
+        new TextDecoder().decode(r.data)).hash).replace(/^#pay=/, "")).trim();
+    } catch {}
+  }
+  return null;
+}
+
+// Opens the reader and hands every tag to `onTag`. Returns false if it could not start.
+async function startScan(onTag, onErr) {
+  stopScan();
+  try {
+    scanStop = new AbortController();
+    scanner = new NDEFReader();
+    await scanner.scan({ signal: scanStop.signal });   // this is what prompts for permission
+    scanner.onreading = ({ message }) => {
+      const slug = readTag(message);
+      if (slug) onTag(slug);
+      else onErr?.("That sticker is empty");
+    };
+    scanner.onreadingerror = () => onErr?.("Could not read that sticker");
+    return true;
+  } catch (e) {
+    stopScan();
+    onErr?.(e.name === "NotAllowedError" ? "NFC permission denied" : "Could not start NFC — is it on?");
+    return false;
+  }
+}
+
+function stopScan() {
+  try { scanStop?.abort(); } catch {}
+  scanStop = null; scanner = null; scanBusy = false;
+}
+
+// ── paying ──
+function openTapPay() {
+  if (!NFC_OK) return toast("This phone can't scan stickers — tap a tile instead");
+  tapDigits = "";
+  tapStep("amount");
+  $("tapSub").textContent = `Your balance ${money(balanceOf(meId))}`;
+  drawTapAmt();
+  sheet("tapSheet", true);
+}
+
+function tapStep(which) {
+  $("tapStepAmount").style.display = which === "amount" ? "" : "none";
+  $("tapStepScan").style.display = which === "scan" ? "" : "none";
+  $("tapTitle").textContent = which === "amount" ? "Tap to pay" : "Ready";
+}
+
+function drawTapAmt() {
+  const n = Number(tapDigits || 0);
+  $("tapAmt").textContent = money(n);
+  $("tapAmt").classList.toggle("zero", n === 0);
+}
+
+for (const b of document.querySelectorAll("[data-tk]")) {
+  b.onclick = () => {
+    if (b.dataset.tk === "back") tapDigits = tapDigits.slice(0, -1);
+    else if (tapDigits.length < 7) tapDigits = (tapDigits + b.dataset.tk).replace(/^0+/, "");
+    drawTapAmt();
+  };
+}
+for (const b of document.querySelectorAll("[data-tadd]")) {
+  b.onclick = () => {
+    tapDigits = String(Math.min(9999999, Number(tapDigits || 0) + Number(b.dataset.tadd)));
+    drawTapAmt();
+  };
+}
+
+$("tapNext").onclick = async () => {
+  const amount = Number(tapDigits || 0);
+  if (amount <= 0) return toast("Enter an amount");
+  tapStep("scan");
+  $("tapScanAmt").textContent = money(amount);
+  $("tapScanMsg").textContent = "Hold their sticker against the back of your phone.";
+  const ok = await startScan(onPayTag, (m) => { $("tapScanMsg").textContent = m; });
+  if (!ok) tapStep("amount");
+};
+
+async function onPayTag(slug) {
+  if (scanBusy) return;
+  const p = players.find((x) => x.nfc_id === slug);
+  if (!p)        return ($("tapScanMsg").textContent = `No player has that sticker. They link it from ⋯ → My sticker.`);
+  if (p.id === meId) return ($("tapScanMsg").textContent = "That's your own sticker.");
+  if (p.is_out)  return ($("tapScanMsg").textContent = `${p.name} is out of the game.`);
+
+  scanBusy = true;
+  const amount = Number(tapDigits || 0);
+  const { data, error } = await sb.from("entries")
+    .insert({ code, from_id: meId, to_id: p.id, amount }).select().single();
+  if (error) { scanBusy = false; return ($("tapScanMsg").textContent = "Failed — tap again"); }
+
+  navigator.vibrate?.(60);
+  if (!entries.some((e) => e.id === data.id)) entries = [...entries, data];
+  stopScan();
+  sheet("tapSheet", false);
+  render();
+  toast(`Paid ${p.name} ${money(amount)}`);
+}
+
+$("tapCancel").onclick = () => { stopScan(); sheet("tapSheet", false); };
+$("tapScanCancel").onclick = () => { stopScan(); sheet("tapSheet", false); };
+$("tapSheet").onclick = (e) => { if (e.target.id === "tapSheet") { stopScan(); sheet("tapSheet", false); } };
+
+// ── linking your own sticker ──
+// Reads whatever slug is already on the tag and claims it for this seat.
+function openLink() {
+  if (!NFC_OK) return toast("This phone can't scan stickers");
+  const mine = me();
+  $("linkSub").textContent = mine?.nfc_id
+    ? `Linked to "${mine.nfc_id}". Tap another sticker to change it.`
+    : "Link a sticker to your seat so others can pay you by tapping it.";
+  $("linkMsg").textContent = "Hold your sticker against the back of your phone.";
+  sheet("linkSheet", true);
+  startScan(onLinkTag, (m) => { $("linkMsg").textContent = m; });
+}
+
+async function onLinkTag(slug) {
+  if (scanBusy) return;
+  const taken = players.find((p) => p.nfc_id === slug && p.id !== meId);
+  if (taken) return ($("linkMsg").textContent = `That sticker is already ${taken.name}'s.`);
+
+  scanBusy = true;
+  const { error } = await sb.from("players").update({ nfc_id: slug }).eq("id", meId);
+  if (error) { scanBusy = false; return ($("linkMsg").textContent = "Failed — tap again"); }
+
+  navigator.vibrate?.(60);
+  players = players.map((p) => (p.id === meId ? { ...p, nfc_id: slug } : p));
+  stopScan();
+  sheet("linkSheet", false);
+  render();
+  toast("Sticker linked");
+}
+
+$("linkCancel").onclick = () => { stopScan(); sheet("linkSheet", false); };
+$("linkSheet").onclick = (e) => { if (e.target.id === "linkSheet") { stopScan(); sheet("linkSheet", false); } };
+
+$("tapPayBtn").onclick = openTapPay;
+$("mSticker").onclick = () => { sheet("menuSheet", false); openLink(); };
+
+// A scan left running in the background keeps the NFC radio awake for nothing.
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopScan(); });
 
 // ───────────────────────────── undo ─────────────────────────────
 $("undoBtn").onclick = async () => {
