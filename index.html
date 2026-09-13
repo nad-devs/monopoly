@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1115">
+<title>Monopoly Cash</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #191d24;
+    --card-2: #212630;
+    --line: #2b3240;
+    --text: #f2f4f8;
+    --dim: #8b94a6;
+    --green: #35c98a;
+    --red: #ff6b6b;
+    --gold: #f0b429;
+    --blue: #4c8dff;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 500 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overscroll-behavior: none;
+  }
+  body { display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+
+  .screen { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .screen.on { display: flex; }
+
+  /* ---------- join ---------- */
+  #join { justify-content: center; padding: 24px; gap: 14px; }
+  #join h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.5px; }
+  #join p.sub { color: var(--dim); margin: 0 0 18px; font-size: 15px; }
+  .field {
+    width: 100%; padding: 16px; border-radius: var(--radius);
+    background: var(--card); border: 1px solid var(--line); color: var(--text);
+    font-size: 18px; outline: none;
+  }
+  .field:focus { border-color: var(--blue); }
+  #codeIn { text-transform: uppercase; letter-spacing: 6px; text-align: center; font-size: 26px; font-weight: 700; }
+  .btn {
+    width: 100%; padding: 17px; border-radius: var(--radius);
+    background: var(--blue); color: #fff; font-weight: 700; font-size: 17px;
+  }
+  .btn.ghost { background: var(--card); border: 1px solid var(--line); color: var(--text); }
+  .btn:active { transform: scale(.98); }
+  .or { text-align: center; color: var(--dim); font-size: 13px; margin: 2px 0; }
+  .err { color: var(--red); font-size: 14px; min-height: 18px; text-align: center; }
+
+  /* ---------- lobby ---------- */
+  #lobby { padding: 24px; justify-content: center; gap: 16px; text-align: center; }
+  .code-big {
+    font-size: 56px; font-weight: 800; letter-spacing: 10px;
+    color: var(--gold); padding: 20px; background: var(--card);
+    border-radius: var(--radius); border: 1px solid var(--line);
+  }
+  .seat-list { display: flex; flex-direction: column; gap: 8px; }
+  .seat-row {
+    display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+    background: var(--card); border-radius: 12px; border: 1px solid var(--line);
+    text-align: left;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+
+  /* ---------- game ---------- */
+  #game { padding: 0; }
+  .top {
+    padding: 14px 16px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+  }
+  .top .code { color: var(--dim); font-size: 13px; letter-spacing: 2px; font-weight: 700; }
+  .menu-btn { color: var(--dim); font-size: 22px; padding: 4px 10px; line-height: 1; }
+
+  .tiles {
+    flex: 1; overflow-y: auto; padding: 14px;
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+    align-content: start;
+  }
+  .tile {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px 14px;
+    display: flex; flex-direction: column; gap: 5px; min-height: 92px;
+    justify-content: center; text-align: left;
+  }
+  .tile:active { background: var(--card-2); }
+  .tile .nm { font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 7px; }
+  .tile .bal { color: var(--dim); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .tile .bal.neg { color: var(--red); }
+  .tile.bank { border-color: #4a4023; background: #221d10; }
+  .tile.bank .nm { color: var(--gold); }
+  .tile.me { border-color: var(--blue); }
+  .tile.out { opacity: .38; }
+  .tile.out .nm::after { content: "OUT"; font-size: 10px; background: var(--red); color: #fff; padding: 2px 5px; border-radius: 4px; letter-spacing: .5px; }
+
+  .log { border-top: 1px solid var(--line); padding: 10px 16px 6px; max-height: 132px; overflow-y: auto; }
+  .log-row {
+    display: flex; justify-content: space-between; gap: 10px;
+    font-size: 13px; color: var(--dim); padding: 3px 0;
+  }
+  .log-row b { color: var(--text); font-weight: 600; }
+  .log-row .amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .log-empty { color: var(--dim); font-size: 13px; padding: 4px 0; }
+
+  .mybar {
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line); background: var(--card);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .mybar .who { font-size: 13px; color: var(--dim); }
+  .mybar .amt { font-size: 38px; font-weight: 800; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+  .mybar .amt.neg { color: var(--red); }
+  .undo {
+    padding: 11px 16px; border-radius: 12px; background: var(--card-2);
+    border: 1px solid var(--line); font-size: 14px; font-weight: 600; flex: none;
+  }
+  .undo[disabled] { opacity: .3; }
+
+  /* ---------- sheets ---------- */
+  .sheet {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(0,0,0,.6); display: none;
+    align-items: flex-end; justify-content: center;
+  }
+  .sheet.on { display: flex; }
+  .sheet-inner {
+    width: 100%; max-width: 520px; background: var(--bg);
+    border-radius: 22px 22px 0 0; border-top: 1px solid var(--line);
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    animation: up .18s ease-out;
+  }
+  @keyframes up { from { transform: translateY(24px); opacity: 0 } }
+  .sheet h2 { margin: 0 0 3px; font-size: 20px; }
+  .sheet .sub { color: var(--dim); font-size: 14px; margin: 0 0 16px; }
+
+  .amount-display {
+    text-align: center; font-size: 46px; font-weight: 800; padding: 12px 0 18px;
+    font-variant-numeric: tabular-nums; letter-spacing: -1px;
+  }
+  .amount-display.zero { color: var(--dim); }
+  .quick { display: flex; gap: 8px; margin-bottom: 12px; }
+  .quick button {
+    flex: 1; padding: 11px 0; border-radius: 11px; background: var(--card);
+    border: 1px solid var(--line); font-size: 14px; font-weight: 600;
+  }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pad button {
+    padding: 18px 0; border-radius: 13px; background: var(--card);
+    border: 1px solid var(--line); font-size: 23px; font-weight: 600;
+  }
+  .pad button:active { background: var(--card-2); }
+  .pad button.wide { grid-column: span 2; }
+  .row2 { display: flex; gap: 9px; margin-top: 12px; }
+  .row2 .btn { flex: 1; }
+  .btn.red { background: var(--red); }
+  .btn.green { background: var(--green); color: #06220f; }
+
+  .pick-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .pick {
+    display: flex; align-items: center; gap: 10px; padding: 15px 16px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 13px;
+    font-size: 16px; font-weight: 600; text-align: left;
+  }
+  .pick:active { border-color: var(--blue); }
+
+  /* menu — "I'm out" lives behind a scroll, out of thumb reach */
+  .menu-scroll { max-height: 58vh; overflow-y: auto; }
+  .menu-item {
+    width: 100%; text-align: left; padding: 17px 16px; border-radius: 13px;
+    background: var(--card); border: 1px solid var(--line); margin-bottom: 8px;
+    font-size: 16px;
+  }
+  .menu-spacer { height: 190px; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; }
+  .menu-item.danger { border-color: #5a2a2a; color: var(--red); }
+
+  .standings { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .stand-row {
+    display: flex; align-items: center; gap: 11px; padding: 15px 16px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 13px;
+  }
+  .stand-row.win { border-color: var(--gold); background: #221d10; }
+  .stand-row .rank { color: var(--dim); font-weight: 700; width: 22px; flex: none; }
+  .stand-row .nm { flex: 1; font-weight: 600; }
+  .stand-row .bal { font-variant-numeric: tabular-nums; }
+  .stand-row .bal.neg { color: var(--red); }
+  .note { color: var(--dim); font-size: 13px; text-align: center; margin-bottom: 14px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
+    background: var(--card-2); border: 1px solid var(--line); color: var(--text);
+    padding: 11px 18px; border-radius: 30px; font-size: 14px; font-weight: 600;
+    z-index: 60; opacity: 0; pointer-events: none; transition: opacity .18s;
+    white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  .toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ============ JOIN ============ -->
+<div class="screen on" id="join">
+  <h1>Monopoly Cash</h1>
+  <p class="sub">No banker. Just money.</p>
+  <input class="field" id="nameIn" placeholder="Your name" maxlength="12" autocomplete="off">
+  <button class="btn" id="newGameBtn">New game</button>
+  <div class="or">or join one</div>
+  <input class="field" id="codeIn" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters">
+  <button class="btn ghost" id="joinBtn">Join</button>
+  <div class="err" id="joinErr"></div>
+</div>
+
+<!-- ============ LOBBY ============ -->
+<div class="screen" id="lobby">
+  <p class="sub" style="color:var(--dim);margin:0">Everyone types this code</p>
+  <div class="code-big" id="lobbyCode">----</div>
+  <div class="seat-list" id="lobbySeats"></div>
+  <button class="btn" id="startBtn">Start game</button>
+  <button class="btn ghost" id="leaveLobbyBtn">Leave</button>
+</div>
+
+<!-- ============ GAME ============ -->
+<div class="screen" id="game">
+  <div class="top">
+    <span class="code" id="gameCode">----</span>
+    <button class="menu-btn" id="menuBtn">⋯</button>
+  </div>
+  <div class="tiles" id="tiles"></div>
+  <div class="log" id="log"></div>
+  <div class="mybar">
+    <div>
+      <div class="who" id="myName">—</div>
+      <div class="amt" id="myBal">$1,500</div>
+    </div>
+    <button class="undo" id="undoBtn" disabled>Undo</button>
+  </div>
+</div>
+
+<!-- ============ PAY SHEET ============ -->
+<div class="sheet" id="paySheet">
+  <div class="sheet-inner">
+    <h2 id="payTitle">Pay</h2>
+    <p class="sub" id="paySub"></p>
+    <div class="amount-display zero" id="payAmt">$0</div>
+    <div class="quick">
+      <button data-add="50">+50</button>
+      <button data-add="100">+100</button>
+      <button data-add="200">+200</button>
+      <button data-add="500">+500</button>
+    </div>
+    <div class="pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k="0" class="wide">0</button><button data-k="back">⌫</button>
+    </div>
+    <div class="row2">
+      <button class="btn ghost" id="payCancel">Cancel</button>
+      <button class="btn" id="payGo">Pay</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MENU SHEET ============ -->
+<div class="sheet" id="menuSheet">
+  <div class="sheet-inner">
+    <h2>Game</h2>
+    <p class="sub" id="menuSub"></p>
+    <div class="menu-scroll">
+      <button class="menu-item" id="mCall">Call it — end &amp; show standings</button>
+      <button class="menu-item" id="mClose">Close</button>
+      <div class="menu-spacer">scroll for more</div>
+      <button class="menu-item danger" id="mOut">I'm out — I went bankrupt</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM OUT ============ -->
+<div class="sheet" id="outSheet">
+  <div class="sheet-inner">
+    <h2>You're out?</h2>
+    <p class="sub">This ends your game. Hand your property cards to whoever bust you.</p>
+    <div id="outCashWrap">
+      <p class="sub" style="margin-bottom:10px">Who takes your remaining <b id="outCash">$0</b>?</p>
+      <div class="pick-list" id="outPicks"></div>
+    </div>
+    <button class="btn ghost" id="outCancel">Cancel</button>
+  </div>
+</div>
+
+<!-- ============ END ============ -->
+<div class="sheet" id="endSheet">
+  <div class="sheet-inner">
+    <h2 id="endTitle">Final standings</h2>
+    <p class="sub">Cash only — settle property between yourselves.</p>
+    <div class="standings" id="standings"></div>
+    <p class="note">Play again keeps the same seats and resets everyone to $1,500.</p>
+    <div class="row2">
+      <button class="btn ghost" id="endLeave">Leave</button>
+      <button class="btn green" id="endAgain">Play again</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+// ───────────────────────────── config ─────────────────────────────
+// Paste your Supabase project URL + anon key here.
+const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL";
+const SUPABASE_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY";
+
+const START = 1500;
+const COLORS = ["#4c8dff", "#35c98a", "#ff6b6b", "#f0b429", "#b07cff", "#3fd0d4"];
+const LOG_LIMIT = 5;
+
+// ───────────────────────────── supabase ─────────────────────────────
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+const configured = !SUPABASE_URL.startsWith("PASTE_");
+const sb = configured ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+// ───────────────────────────── state ─────────────────────────────
+let code = null;
+let meId = null;
+let players = [];   // [{id, name, seat, is_out}]
+let entries = [];   // [{id, from_id, to_id, amount, note}] oldest → newest
+let channel = null;
+let payTarget = null;   // player object, or BANK
+let payDigits = "";
+
+const BANK = { id: null, name: "Bank", bank: true };
+
+const $ = (id) => document.getElementById(id);
+const money = (n) => (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US");
+
+function show(screen) {
+  for (const s of document.querySelectorAll(".screen")) s.classList.toggle("on", s.id === screen);
+}
+function sheet(id, on) { $(id).classList.toggle("on", on); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("on"), 1900);
+}
+
+// ───────────────────────────── derived ─────────────────────────────
+// Balance is never stored. It is always 1500 + the sum of the ledger.
+function balanceOf(id) {
+  let n = START;
+  for (const e of entries) {
+    if (e.from_id === id) n -= e.amount;
+    if (e.to_id === id) n += e.amount;
+  }
+  return n;
+}
+const me = () => players.find((p) => p.id === meId);
+const nameOf = (id) => (id === null ? "Bank" : players.find((p) => p.id === id)?.name ?? "?");
+const colorOf = (p) => COLORS[p.seat % COLORS.length];
+const alive = () => players.filter((p) => !p.is_out);
+
+// ───────────────────────────── persistence ─────────────────────────────
+function remember() {
+  try { localStorage.setItem("mc", JSON.stringify({ code, meId })); } catch {}
+}
+function forget() {
+  try { localStorage.removeItem("mc"); } catch {}
+}
+function recall() {
+  try { return JSON.parse(localStorage.getItem("mc") || "null"); } catch { return null; }
+}
+
+// ───────────────────────────── data ─────────────────────────────
+function randCode() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ";  // no I/O — they read as 1/0
+  return Array.from({ length: 4 }, () => A[Math.floor(Math.random() * A.length)]).join("");
+}
+
+async function loadAll() {
+  const [p, e, g] = await Promise.all([
+    sb.from("players").select("*").eq("code", code).order("seat"),
+    sb.from("entries").select("*").eq("code", code).order("id"),
+    sb.from("games").select("*").eq("code", code).single(),
+  ]);
+  players = p.data ?? [];
+  entries = e.data ?? [];
+  return g.data;
+}
+
+function subscribe() {
+  if (channel) sb.removeChannel(channel);
+  channel = sb
+    .channel("g:" + code)
+    .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: "code=eq." + code }, onPlayers)
+    .on("postgres_changes", { event: "*", schema: "public", table: "entries", filter: "code=eq." + code }, onEntries)
+    .on("postgres_changes", { event: "*", schema: "public", table: "games", filter: "code=eq." + code }, onGame)
+    .subscribe();
+}
+
+function onPlayers(pl) {
+  if (pl.eventType === "INSERT") players = [...players, pl.new].sort((a, b) => a.seat - b.seat);
+  else if (pl.eventType === "UPDATE") players = players.map((p) => (p.id === pl.new.id ? pl.new : p));
+  else if (pl.eventType === "DELETE") players = players.filter((p) => p.id !== pl.old.id);
+  render();
+}
+function onEntries(pl) {
+  if (pl.eventType === "INSERT") { entries = [...entries, pl.new]; flash(pl.new); }
+  else if (pl.eventType === "DELETE") entries = entries.filter((e) => e.id !== pl.old.id);
+  render();
+}
+function onGame(pl) {
+  if (pl.new?.ended_at) renderEnd();
+  else { sheet("endSheet", false); render(); }
+}
+
+function flash(e) {
+  if (e.to_id === meId) toast(`${nameOf(e.from_id)} paid you ${money(e.amount)}`);
+  else if (e.from_id === meId && e.note !== "self") toast(`You paid ${nameOf(e.to_id)} ${money(e.amount)}`);
+}
+
+// ───────────────────────────── join ─────────────────────────────
+$("newGameBtn").onclick = async () => {
+  const name = $("nameIn").value.trim();
+  if (!name) return ($("joinErr").textContent = "Name first");
+  if (!configured) return ($("joinErr").textContent = "Supabase keys not set — see README");
+  code = randCode();
+  const { error } = await sb.from("games").insert({ code });
+  if (error) return ($("joinErr").textContent = error.message);
+  await seatMe(name);
+  show("lobby");
+  render();
+};
+
+$("joinBtn").onclick = async () => {
+  const name = $("nameIn").value.trim();
+  const c = $("codeIn").value.trim().toUpperCase();
+  if (!name) return ($("joinErr").textContent = "Name first");
+  if (c.length !== 4) return ($("joinErr").textContent = "4 letters");
+  if (!configured) return ($("joinErr").textContent = "Supabase keys not set — see README");
+  const { data } = await sb.from("games").select("code").eq("code", c).single();
+  if (!data) return ($("joinErr").textContent = "No game " + c);
+  code = c;
+  await seatMe(name);
+  const g = await loadAll();
+  show(players.length && entries.length ? "game" : "lobby");
+  if (g?.ended_at) renderEnd();
+  render();
+};
+
+async function seatMe(name) {
+  await loadAll().catch(() => {});
+  const seat = players.length ? Math.max(...players.map((p) => p.seat)) + 1 : 0;
+  if (seat >= 6) { $("joinErr").textContent = "Game full (6)"; return; }
+  const { data, error } = await sb.from("players").insert({ code, name, seat }).select().single();
+  if (error) { $("joinErr").textContent = error.message; return; }
+  meId = data.id;
+  players = [...players.filter((p) => p.id !== data.id), data].sort((a, b) => a.seat - b.seat);
+  remember();
+  subscribe();
+}
+
+$("startBtn").onclick = () => {
+  if (players.length < 2) return toast("Need 2 players");
+  show("game");
+  render();
+};
+$("leaveLobbyBtn").onclick = leave;
+
+async function leave() {
+  if (channel) sb.removeChannel(channel);
+  if (meId) await sb.from("players").delete().eq("id", meId);
+  code = meId = null; players = []; entries = [];
+  forget();
+  sheet("endSheet", false);
+  show("join");
+}
+
+// ───────────────────────────── render ─────────────────────────────
+function render() {
+  $("lobbyCode").textContent = code ?? "----";
+  $("gameCode").textContent = code ?? "----";
+  $("menuSub").textContent = "Code " + (code ?? "----");
+
+  $("lobbySeats").innerHTML = players
+    .map((p) => `<div class="seat-row"><span class="dot" style="background:${colorOf(p)}"></span>
+      ${esc(p.name)}${p.id === meId ? " (you)" : ""}</div>`)
+    .join("");
+
+  const t = $("tiles");
+  t.innerHTML = "";
+  for (const p of players) {
+    if (p.id === meId) continue;   // you don't pay yourself
+    const b = balanceOf(p.id);
+    t.appendChild(tile({
+      name: p.name, color: colorOf(p), bal: b, out: p.is_out,
+      onClick: () => (p.is_out ? unOut(p) : openPay(p)),
+    }));
+  }
+  t.appendChild(tile({ name: "Bank", color: "var(--gold)", bank: true, onClick: () => openPay(BANK) }));
+
+  const mine = me();
+  $("myName").textContent = mine ? (mine.is_out ? mine.name + " · out" : mine.name) : "—";
+  const mb = balanceOf(meId);
+  $("myBal").textContent = money(mb);
+  $("myBal").classList.toggle("neg", mb < 0);
+
+  renderLog();
+  $("undoBtn").disabled = entries.length === 0;
+}
+
+function tile({ name, color, bal, out, bank, onClick }) {
+  const el = document.createElement("button");
+  el.className = "tile" + (bank ? " bank" : "") + (out ? " out" : "");
+  el.innerHTML = `<div class="nm">${bank ? "" : `<span class="dot" style="background:${color}"></span>`}${esc(name)}</div>
+    <div class="bal${bal < 0 ? " neg" : ""}">${bank ? "tap to pay / collect" : money(bal)}</div>`;
+  el.onclick = onClick;
+  return el;
+}
+
+function renderLog() {
+  const box = $("log");
+  const last = entries.slice(-LOG_LIMIT).reverse();
+  if (!last.length) { box.innerHTML = `<div class="log-empty">No payments yet.</div>`; return; }
+  box.innerHTML = last.map((e) => {
+    const from = e.from_id === meId ? "You" : nameOf(e.from_id);
+    const to = e.to_id === meId ? "you" : nameOf(e.to_id);
+    return `<div class="log-row"><span><b>${esc(from)}</b> → ${esc(to)}</span>
+      <span class="amt">${money(e.amount)}</span></div>`;
+  }).join("");
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ───────────────────────────── pay ─────────────────────────────
+function openPay(target) {
+  payTarget = target;
+  payDigits = "";
+  const bank = target.bank;
+  $("payTitle").textContent = bank ? "Bank" : "Pay " + target.name;
+  $("paySub").textContent = bank
+    ? "Pay the bank, or collect from it."
+    : `Your balance ${money(balanceOf(meId))}`;
+  $("payGo").textContent = bank ? "Pay bank" : "Pay";
+  // Bank gets a second button: collect (Go, refunds, sale proceeds)
+  let collect = $("payCollect");
+  if (bank && !collect) {
+    collect = document.createElement("button");
+    collect.className = "btn green";
+    collect.id = "payCollect";
+    collect.textContent = "Collect";
+    collect.onclick = () => submitPay(true);
+    $("payGo").after(collect);
+  } else if (!bank && collect) collect.remove();
+  drawAmt();
+  sheet("paySheet", true);
+}
+
+function drawAmt() {
+  const n = Number(payDigits || 0);
+  $("payAmt").textContent = money(n);
+  $("payAmt").classList.toggle("zero", n === 0);
+}
+
+for (const b of document.querySelectorAll(".pad button")) {
+  b.onclick = () => {
+    if (b.dataset.k === "back") payDigits = payDigits.slice(0, -1);
+    else if (payDigits.length < 7) payDigits = (payDigits + b.dataset.k).replace(/^0+/, "");
+    drawAmt();
+  };
+}
+for (const b of document.querySelectorAll(".quick button")) {
+  b.onclick = () => {
+    payDigits = String(Math.min(9999999, Number(payDigits || 0) + Number(b.dataset.add)));
+    drawAmt();
+  };
+}
+
+$("payCancel").onclick = () => sheet("paySheet", false);
+$("payGo").onclick = () => submitPay(false);
+
+async function submitPay(collecting) {
+  const amount = Number(payDigits || 0);
+  if (amount <= 0) return toast("Enter an amount");
+  const other = payTarget.bank ? null : payTarget.id;
+  const row = collecting
+    ? { code, from_id: null, to_id: meId, amount }       // bank → me
+    : { code, from_id: meId, to_id: other, amount };     // me → them
+  sheet("paySheet", false);
+  // Optimistic: show it now, let realtime reconcile.
+  const { data, error } = await sb.from("entries").insert(row).select().single();
+  if (error) return toast("Failed — try again");
+  if (!entries.some((e) => e.id === data.id)) { entries = [...entries, data]; render(); }
+}
+
+// ───────────────────────────── undo ─────────────────────────────
+$("undoBtn").onclick = async () => {
+  const last = entries[entries.length - 1];
+  if (!last) return;
+  const label = `${last.from_id === meId ? "your" : nameOf(last.from_id) + "'s"} ${money(last.amount)} to ${nameOf(last.to_id)}`;
+  if (!confirm(`Undo ${label}?`)) return;
+  const { error } = await sb.from("entries").delete().eq("id", last.id);
+  if (error) return toast("Undo failed");
+  entries = entries.filter((e) => e.id !== last.id);
+  render();
+  toast("Undone");
+};
+
+// ───────────────────────────── menu / out / end ─────────────────────────────
+$("menuBtn").onclick = () => sheet("menuSheet", true);
+$("mClose").onclick = () => sheet("menuSheet", false);
+$("menuSheet").onclick = (e) => { if (e.target.id === "menuSheet") sheet("menuSheet", false); };
+$("paySheet").onclick = (e) => { if (e.target.id === "paySheet") sheet("paySheet", false); };
+
+$("mOut").onclick = () => {
+  sheet("menuSheet", false);
+  const cash = balanceOf(meId);
+  $("outCash").textContent = money(cash);
+  $("outCashWrap").style.display = cash > 0 ? "" : "none";
+  const others = alive().filter((p) => p.id !== meId);
+  $("outPicks").innerHTML = "";
+  for (const p of others) {
+    const b = document.createElement("button");
+    b.className = "pick";
+    b.innerHTML = `<span class="dot" style="background:${colorOf(p)}"></span>${esc(p.name)}`;
+    b.onclick = () => goOut(p.id);
+    $("outPicks").appendChild(b);
+  }
+  const bankBtn = document.createElement("button");
+  bankBtn.className = "pick";
+  bankBtn.innerHTML = `<span class="dot" style="background:var(--gold)"></span>The Bank`;
+  bankBtn.onclick = () => goOut(null);
+  $("outPicks").appendChild(bankBtn);
+  if (cash <= 0) {
+    const b = document.createElement("button");
+    b.className = "btn red";
+    b.textContent = "Confirm — I'm out";
+    b.onclick = () => goOut(null);
+    $("outPicks").parentElement.insertBefore(b, $("outCancel"));
+  }
+  sheet("outSheet", true);
+};
+$("outCancel").onclick = () => sheet("outSheet", false);
+
+async function goOut(toId) {
+  const cash = balanceOf(meId);
+  if (cash > 0) await sb.from("entries").insert({ code, from_id: meId, to_id: toId, amount: cash, note: "bust" });
+  await sb.from("players").update({ is_out: true }).eq("id", meId);
+  sheet("outSheet", false);
+  const left = alive().filter((p) => p.id !== meId);
+  if (left.length === 1) await sb.from("games").update({ ended_at: new Date().toISOString() }).eq("code", code);
+  toast("You're out");
+}
+
+async function unOut(p) {
+  if (!confirm(`Bring ${p.name} back in?`)) return;
+  await sb.from("players").update({ is_out: false }).eq("id", p.id);
+  await sb.from("games").update({ ended_at: null }).eq("code", code);
+}
+
+$("mCall").onclick = async () => {
+  sheet("menuSheet", false);
+  if (!confirm("Call it? Ends the game for everyone.")) return;
+  await sb.from("games").update({ ended_at: new Date().toISOString() }).eq("code", code);
+  renderEnd();
+};
+
+function renderEnd() {
+  const ranked = [...players].sort((a, b) => {
+    if (a.is_out !== b.is_out) return a.is_out ? 1 : -1;
+    return balanceOf(b.id) - balanceOf(a.id);
+  });
+  const survivors = alive();
+  $("endTitle").textContent = survivors.length === 1 ? `${survivors[0].name} wins` : "Final standings";
+  $("standings").innerHTML = ranked.map((p, i) => {
+    const b = balanceOf(p.id);
+    return `<div class="stand-row${i === 0 ? " win" : ""}">
+      <span class="rank">${i + 1}</span>
+      <span class="dot" style="background:${colorOf(p)}"></span>
+      <span class="nm">${esc(p.name)}${p.is_out ? " · out" : ""}</span>
+      <span class="bal${b < 0 ? " neg" : ""}">${money(b)}</span></div>`;
+  }).join("");
+  sheet("endSheet", true);
+}
+
+$("endLeave").onclick = leave;
+$("endAgain").onclick = async () => {
+  await sb.from("entries").delete().eq("code", code);
+  await sb.from("players").update({ is_out: false }).eq("code", code);
+  await sb.from("games").update({ ended_at: null }).eq("code", code);
+  entries = [];
+  players = players.map((p) => ({ ...p, is_out: false }));
+  sheet("endSheet", false);
+  render();
+  toast("New game — $1,500 each");
+};
+
+// ───────────────────────────── boot ─────────────────────────────
+(async function boot() {
+  if (!configured) {
+    $("joinErr").textContent = "Supabase keys not set — see README";
+    return;
+  }
+  const saved = recall();
+  if (!saved?.code || !saved?.meId) return;
+  code = saved.code;
+  meId = saved.meId;
+  const g = await loadAll().catch(() => null);
+  if (!players.some((p) => p.id === meId)) { forget(); code = meId = null; return; }
+  subscribe();
+  show(entries.length || players.length > 1 ? "game" : "lobby");
+  render();
+  if (g?.ended_at) renderEnd();
+})();
+</script>
+</body>
+</html>
